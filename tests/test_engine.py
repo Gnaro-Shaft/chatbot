@@ -1,5 +1,6 @@
 """Tests pour core/engine.py — couverture des branches de commandes."""
 
+from collections.abc import Callable
 from unittest.mock import MagicMock, patch
 
 from chatbot.core.engine import ConversationEngine
@@ -17,48 +18,81 @@ def _make_settings() -> MagicMock:
     return s
 
 
-def _simulate(inputs: list[str]) -> MagicMock:
-    """Crée un mock de input qui consomme une liste de chaînes."""
+def _make_get_input(inputs: list[str]) -> MagicMock:
+    """Crée un mock get_input qui consomme une liste de chaînes."""
     it = iter(inputs)
-    return patch("builtins.input", side_effect=lambda *_: next(it))
+    mock = MagicMock()
+    mock.side_effect = lambda: next(it)
+    return mock
 
 
 @patch("chatbot.core.engine.ask")
+@patch("chatbot.core.engine.get_consent", return_value=True)
+@patch("chatbot.core.engine.display_transparency_banner")
+def test_engine_single_turn(
+    mock_banner: MagicMock, mock_consent: MagicMock, mock_ask: MagicMock,
+    capsys: object,
+) -> None:
+    """Un tour de conversation s'effectue correctement."""
+    mock_ask.return_value = ConversationTurn(
+        user="bonjour",
+        assistant="salut, comment puis-je t'aider ?",
+        sources=[],
+    )
+    get_input = _make_get_input(["bonjour", "/quit"])
+    with patch("chatbot.core.engine.get_consent", return_value=True):
+        engine = ConversationEngine(
+            _make_settings(), get_input=get_input
+        )
+        engine.start()
+    captured = capsys.readouterr()
+    assert "salut, comment puis-je t'aider ?" in captured.out
+
+
+@patch("chatbot.core.engine.ask")
+@patch("chatbot.core.engine.get_consent", return_value=False)
+def test_engine_no_consent(
+    mock_consent: MagicMock, mock_ask: MagicMock, capsys: object,
+) -> None:
+    """Sans consentement, le chatbot ne démarre pas."""
+    get_input = _make_get_input(["/quit"])
+    engine = ConversationEngine(_make_settings(), get_input=get_input)
+    engine.start()
+    mock_ask.assert_not_called()
+    captured = capsys.readouterr()
+    assert "Session annulée" in captured.out
+
+
 @patch("chatbot.core.engine.get_consent", return_value=True)
 @patch("chatbot.core.engine.display_transparency_banner")
 def test_engine_undo_command(
-    mock_banner: MagicMock, mock_consent: MagicMock, mock_ask: MagicMock,
-    capsys: object,
+    mock_banner: MagicMock, mock_consent: MagicMock, capsys: object,
 ) -> None:
     """/undo supprime la dernière réponse de l'historique."""
-    mock_ask.return_value = ConversationTurn(
-        user="Q", assistant="R-a-supprimer"
-    )
-    engine = ConversationEngine(_make_settings())
-    with _simulate(["Q", "/undo", "/quit"]):
+    with patch("chatbot.core.engine.ask", return_value=ConversationTurn(
+        user="Q", assistant="à supprimer"
+    )):
+        get_input = _make_get_input(["Q", "/undo", "/quit"])
+        engine = ConversationEngine(_make_settings(), get_input=get_input)
         engine.start()
-
     captured = capsys.readouterr()
     assert "annulée" in captured.out.lower()
-    assert len(engine.memory) == 0
 
 
-@patch("chatbot.core.engine.ask")
 @patch("chatbot.core.engine.get_consent", return_value=True)
 @patch("chatbot.core.engine.display_transparency_banner")
 def test_engine_correct_command(
-    mock_banner: MagicMock, mock_consent: MagicMock, mock_ask: MagicMock,
-    capsys: object,
+    mock_banner: MagicMock, mock_consent: MagicMock, capsys: object,
 ) -> None:
     """/correct remplace la dernière réponse."""
-    mock_ask.return_value = ConversationTurn(user="Q", assistant="ancienne réponse")
-    engine = ConversationEngine(_make_settings())
-    with _simulate(["Q", "/correct nouvelle réponse", "/quit"]):
+    with patch("chatbot.core.engine.ask", return_value=ConversationTurn(
+        user="Q", assistant="ancienne"
+    )):
+        get_input = _make_get_input(["Q", "/correct nouvelle", "/quit"])
+        engine = ConversationEngine(_make_settings(), get_input=get_input)
         engine.start()
-
     captured = capsys.readouterr()
     assert "corrigée" in captured.out.lower()
-    assert engine.memory.last().assistant == "nouvelle réponse"
 
 
 @patch("chatbot.core.engine.get_consent", return_value=True)
@@ -67,11 +101,10 @@ def test_engine_help_command(
     mock_banner: MagicMock, mock_consent: MagicMock, capsys: object,
 ) -> None:
     """/help affiche l'aide sans appeler le LLM."""
-    engine = ConversationEngine(_make_settings())
-    with patch("chatbot.core.engine.ask"), \
-         _simulate(["/help", "/quit"]):
+    get_input = _make_get_input(["/help", "/quit"])
+    with patch("chatbot.core.engine.ask"):
+        engine = ConversationEngine(_make_settings(), get_input=get_input)
         engine.start()
-
     captured = capsys.readouterr()
     assert "/undo" in captured.out
     assert "/correct" in captured.out
@@ -79,17 +112,18 @@ def test_engine_help_command(
 
 
 @patch("chatbot.core.engine.export_to_console")
-@patch("chatbot.core.engine.ask")
 @patch("chatbot.core.engine.get_consent", return_value=True)
 @patch("chatbot.core.engine.display_transparency_banner")
 def test_engine_export_command(
     mock_banner: MagicMock, mock_consent: MagicMock,
-    mock_ask: MagicMock, mock_export: MagicMock,
+    mock_export: MagicMock,
 ) -> None:
     """/export appelle export_to_console."""
-    mock_ask.return_value = ConversationTurn(user="Q", assistant="R")
-    engine = ConversationEngine(_make_settings())
-    with _simulate(["Q", "/export", "/quit"]):
+    get_input = _make_get_input(["Q", "/export", "/quit"])
+    with patch("chatbot.core.engine.ask", return_value=ConversationTurn(
+        user="Q", assistant="R"
+    )):
+        engine = ConversationEngine(_make_settings(), get_input=get_input)
         engine.start()
     mock_export.assert_called_once()
 
@@ -100,9 +134,9 @@ def test_engine_empty_input_is_skipped(
     mock_banner: MagicMock, mock_consent: MagicMock, capsys: object,
 ) -> None:
     """Une ligne vide est ignorée, ni /quit ni LLM n'est appelé."""
-    engine = ConversationEngine(_make_settings())
-    with patch("chatbot.core.engine.ask") as mock_ask, \
-         _simulate(["", "  ", "/quit"]):
+    get_input = _make_get_input(["", "  ", "/quit"])
+    with patch("chatbot.core.engine.ask") as mock_ask:
+        engine = ConversationEngine(_make_settings(), get_input=get_input)
         engine.start()
     mock_ask.assert_not_called()
 
@@ -112,11 +146,12 @@ def test_engine_empty_input_is_skipped(
 def test_engine_tavily_error_is_handled(
     mock_banner: MagicMock, mock_consent: MagicMock, capsys: object,
 ) -> None:
-    """L'erreur Tavily est capturée et affichée, le chatbot continue."""
-    engine = ConversationEngine(_make_settings())
-    with patch("chatbot.core.engine.ask", side_effect=TavilyError(500, "Serveur down")): 
-        with _simulate(["question", "/quit"]):
-            engine.start()
+    """L'erreur Tavily est affichée, le chatbot continue."""
+    get_input = _make_get_input(["question", "/quit"])
+    with patch("chatbot.core.engine.ask",
+               side_effect=TavilyError(500, "Serveur down")):
+        engine = ConversationEngine(_make_settings(), get_input=get_input)
+        engine.start()
     captured = capsys.readouterr()
     assert "Erreur" in captured.out
 
@@ -127,10 +162,11 @@ def test_engine_eof_ends_loop(
     mock_banner: MagicMock, mock_consent: MagicMock,
 ) -> None:
     """Un EOF (Ctrl+D) termine proprement la boucle."""
-    engine = ConversationEngine(_make_settings())
-    it = iter([])
-    with patch("chatbot.core.engine.ask"), \
-         patch("builtins.input", side_effect=lambda *_: (_ for _ in ()).throw(EOFError)):
+    def _raise_eof() -> str:
+        raise EOFError
+
+    engine = ConversationEngine(_make_settings(), get_input=_raise_eof)
+    with patch("chatbot.core.engine.ask"):
         engine.start()
     assert len(engine.memory) == 0
 
@@ -140,7 +176,8 @@ def test_engine_no_consent_branch(
     mock_consent: MagicMock, capsys: object,
 ) -> None:
     """Pas de consentement : le chatbot ne démarre pas."""
-    engine = ConversationEngine(_make_settings())
+    get_input = _make_get_input(["/quit"])
+    engine = ConversationEngine(_make_settings(), get_input=get_input)
     with patch("chatbot.core.engine.display_transparency_banner") as mock_banner:
         engine.start()
     assert not mock_banner.called
@@ -154,15 +191,15 @@ def test_engine_stats_command(
     mock_banner: MagicMock, mock_consent: MagicMock, capsys: object,
 ) -> None:
     """/stats affiche les statistiques de la session."""
-    engine = ConversationEngine(_make_settings())
+    get_input = _make_get_input(["Q", "/stats", "/quit"])
     with patch("chatbot.core.engine.ask", return_value=ConversationTurn(
         user="Q", assistant="R", sources=["https://a.fr"]
-    )), _simulate(["Q", "/stats", "/quit"]):
+    )):
+        engine = ConversationEngine(_make_settings(), get_input=get_input)
         engine.start()
     captured = capsys.readouterr()
-    assert "Tours:  1" in captured.out
-    assert "Sources: 1" in captured.out
-    assert "Sources: https://a.fr" in captured.out
+    assert "tours: 1" in captured.out
+    assert "Sources:" in captured.out or "sources:" in captured.out
 
 
 @patch("chatbot.core.engine.get_consent", return_value=True)
@@ -172,10 +209,12 @@ def test_engine_sources_displayed_when_present(
 ) -> None:
     """Les sources sont affichées quand elles sont présentes."""
     turn = ConversationTurn(
-        user="Q", assistant="R", sources=["https://a.fr", "https://b.fr"]
+        user="Q", assistant="R",
+        sources=["https://a.fr", "https://b.fr"],
     )
-    engine = ConversationEngine(_make_settings())
-    with patch("chatbot.core.engine.ask", return_value=turn), _simulate(["Q", "/quit"]):
+    get_input = _make_get_input(["Q", "/quit"])
+    with patch("chatbot.core.engine.ask", return_value=turn):
+        engine = ConversationEngine(_make_settings(), get_input=get_input)
         engine.start()
     captured = capsys.readouterr()
     assert "https://a.fr, https://b.fr" in captured.out

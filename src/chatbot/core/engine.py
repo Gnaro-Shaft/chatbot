@@ -7,6 +7,8 @@ Il n'appelle pas directement l'API LLM : il délègue à llm/client.py.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from chatbot.ai_act.logging import SessionLog
 from chatbot.ai_act.oversight import correct, undo
 from chatbot.ai_act.transparency import display_transparency_banner
@@ -25,10 +27,16 @@ class ConversationEngine:
     :cvar log: Journal des échanges
     """
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        get_input: Callable[[], str] | None = None,
+    ) -> None:
         """Initialise le moteur.
 
         :param settings: Configuration (par défaut : depuis .env)
+        :param get_input: Fonction pour lire une saisie utilisateur
+                         (par défaut: input() du module builtins)
         """
         self.settings = settings or Settings.from_env()
         self.memory = MemoryManager(
@@ -36,6 +44,7 @@ class ConversationEngine:
         )
         self.log = SessionLog()
         self._running = False
+        self._get_input = get_input or input
 
     def start(self) -> None:
         """Démare la session : consentement puis boucle de conversation."""
@@ -50,10 +59,11 @@ class ConversationEngine:
     def _loop(self) -> None:
         """Boucle principale de la conversation."""
         print("  (taper /quit pour quitter, /help pour les commandes)\n")
+        total_turns = 0
 
         while self._running:
             try:
-                user_input = input("Vous: ").strip()
+                user_input = self._get_input().strip()
             except (EOFError, KeyboardInterrupt):
                 print("\n")
                 break
@@ -88,10 +98,12 @@ class ConversationEngine:
 
             self.memory.add(turn)
             self.log.log_turn(turn)
+            total_turns += 1
 
             print(f"\nChatbot: {turn.assistant}")
             if turn.sources:
                 print(f"  Sources: {', '.join(turn.sources)}")
+            self._print_stats()
             print()
 
     def _print_help(self) -> None:
@@ -109,12 +121,10 @@ class ConversationEngine:
     def _print_stats(self) -> None:
         """Affiche les statistiques de la session."""
         total = len(self.log)
-        sources_count = sum(
-            len(e["sources"]) for e in self.log.entries
-        )
+        sources_count = sum(len(e["sources"]) for e in self.log.entries)
         print(
             f"  [Stats] "
-            f"Tours:  {total} | "
-            f"Sources: {sources_count} | "
-            f"Mémoire: {len(self.memory)} / {self.settings.memory_turns}",
+            f"tours: {total} | "
+            f"sources: {sources_count} | "
+            f"mémoire: {len(self.memory)} / {self.settings.memory_turns}",
         )
