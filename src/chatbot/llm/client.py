@@ -1,9 +1,9 @@
 """LLM — Client pour l'API Tavily.
 
 Tavily est utilisé comme moteur de recherche web.
-La langue des résultats est forcée en français via `language` / `filter_by_language`.
-Les réponses sont construites à partir des résultats FR — pas via include_answer
-(comme l'`answer` de Tavily suit la langue de la question, pas des instructions FR).
+La langue des résultats est poussée en français via `language: fr`.
+Si l'answer de Tavily revient en anglais (question en anglais),
+elle est traduite via MyMemory avant d'être renvoyée.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import time
 
 import requests
 
+from chatbot.ai_act.translate import translate_to_french
 from chatbot.config import Settings
 from chatbot.core.prompt import ConversationTurn
 
@@ -45,19 +46,21 @@ def ask(
 ) -> ConversationTurn:
     """Envoie une question à Tavily et renvoie une ConversationTurn.
 
-    La question seule est envoyée au moteur de recherche (pas le contexte
-    conversationnel qui polluerait les résultats). Le contexte est
-    réutilisé uniquement pour construire une requête plus riche.
+    La question est traduite en français avant d'être envoyée au moteur de
+    recherche pour améliorer la qualité des résultats FR. L'answer de Tavily
+    est traduite en français si elle ne l'est pas déjà.
 
-    :param question: Message de l'utilisateur actuel
+    :param question: Message de l'utilisateur (n'importe quelle langue)
     :param history: Historique des tours précédents
     :param settings: Configuration (clé API, profondeur, langue, etc.)
-    :return: Un ConversationTurn (question / réponse / sources)
+    :return: Un ConversationTurn (question / réponse FR / sources)
     """
+    # On traduit la question en FR pour améliorer le classement des résultats
+    fr_question = translate_to_french(question)
+
     payload: dict[str, object] = {
         "api_key": settings.tavily_api_key,
-        # Préfixe une instruction FR pour que l'answer soit toujours en français
-        "query": f"Réponds en français : {question}",
+        "query": fr_question,
         "search_depth": settings.tavily_search_depth,
         "max_results": settings.tavily_max_results,
         "include_answer": True,
@@ -65,7 +68,7 @@ def ask(
         "language": "fr",
     }
 
-    logger.info("appel Tavily pour : %s", question[:80])
+    logger.info("appel Tavily pour : %s", fr_question[:80])
     start = time.perf_counter()
 
     response = requests.post(TAVILY_ENDPOINT, json=payload, timeout=30)
@@ -82,11 +85,14 @@ def ask(
     results: list[dict] = data.get("results", [])
     sources: list[str] = [r.get("url", "") for r in results if r.get("url")]
 
-    # On préfère l'answer de Tavily (LLM) s'il est non vide
     raw_answer: str = (data.get("answer") or "").strip()
-    answer = raw_answer if raw_answer else _build_answer_from_results(results)
+    if raw_answer:
+        # La réponse de Tavily peut être en anglais → on force le français
+        answer = translate_to_french(raw_answer)
+    else:
+        answer = _build_answer_from_results(results)
 
-    logger.info("réponse construite à partir de %d sources", len(sources))
+    logger.info("réponse finale traduite en français (%d sources)", len(sources))
     return ConversationTurn(user=question, assistant=answer, sources=sources)
 
 
@@ -97,15 +103,13 @@ def _clean_content(raw: str, max_len: int = 250) -> str:
     :param max_len: Longueur maximale
     :return: Texte nettoyé
     """
-    # Retire tags HTML, markdown headings / bold
     cleaned = _TAG_RE.sub("", raw)
-    # Éspace multiples
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned[:max_len]
 
 
 def _build_answer_from_results(results: list[dict]) -> str:
-    """Construit une réponse de synthèse en français.
+    """Construit une réponse en français à partir des résultats.
 
     :param results: Liste de résultats Tavily
     :return: Texte de synthèse en français
@@ -120,6 +124,6 @@ def _build_answer_from_results(results: list[dict]) -> str:
         lines.append(f"• {title}")
         if content:
             lines.append(f"  {content}")
-        lines.append("")  # ligne vide entre résultats
+        lines.append("")
 
     return "\n".join(lines).strip()

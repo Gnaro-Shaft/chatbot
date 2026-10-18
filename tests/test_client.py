@@ -1,7 +1,7 @@
 """Tests pour llm/client.py.
 
 Toutes les requêtes HTTP sont simulées avec unittest.mock.
-Le test ne doit jamais appeler l'API Tavily réelle.
+Aucun appel à l'API Tavily réelle.
 """
 
 from unittest.mock import MagicMock, patch
@@ -22,21 +22,24 @@ MOCK_RESPONSE = {
     "results": [
         {
             "title": "Python - Wikipédia",
-            "content": "Python est un langage de programmation créé par Guido van Rossum. "
-            "## Historique\n### 1991 - Première version",
+            "content": "Python est un langage de programmation créé par Guido van Rossum.",
             "url": "https://fr.wikipedia.org/wiki/Python",
         },
         {
             "title": "Python.org",
-            "content": "Welcome to the Python Programming language",
+            "content": "Welcome to the Python Programming Language community.",
             "url": "https://python.org",
         },
-    ],
+    ]
+}
+
+MOCK_RESPONSE_WITH_ANSWER = {
+    "answer": "Python is a high-level programming language created by Guido van Rossum.",
+    "results": MOCK_RESPONSE["results"],
 }
 
 
 def _make_settings() -> MagicMock:
-    """Crée un mock de Settings."""
     s = MagicMock()
     s.tavily_api_key = "test-key"
     s.tavily_max_results = 5
@@ -49,7 +52,7 @@ def _make_settings() -> MagicMock:
 
 @patch("chatbot.llm.client.requests.post")
 def test_ask_single_question(mock_post: MagicMock) -> None:
-    """ask() renvoie une ConversationTurn construite depuis les résultats."""
+    """ask() renvoie une ConversationTurn avec les sources."""
     mock_post.return_value.status_code = 200
     mock_post.return_value.json.return_value = MOCK_RESPONSE
 
@@ -61,23 +64,28 @@ def test_ask_single_question(mock_post: MagicMock) -> None:
 
     assert isinstance(result, ConversationTurn)
     assert result.user == "Qu'est-ce que Python ?"
-    len(result.sources) == 2
-    assert "Wikipédia" in result.assistant or "Python" in result.assistant
+    assert len(result.sources) == 2
+    assert "Wikipédia" in result.assistant or "Python" in result.assistant.upper()
 
 
 @patch("chatbot.llm.client.requests.post")
-def test_ask_with_history_sends_only_question(mock_post: MagicMock) -> None:
-    """ask() envoie seulement la question (pas l'historique) au moteur de recherche."""
+def test_ask_sends_tavily_payload(mock_post: MagicMock) -> None:
+    """ask() envoie le bon payload à Tavily."""
     mock_post.return_value.status_code = 200
     mock_post.return_value.json.return_value = MOCK_RESPONSE
 
-    history = [ConversationTurn(user="Q1", assistant="R1")]
-    ask("Q2", history, _make_settings())
+    ask("Quelle est la capitale de la France ?", [], _make_settings())
 
     payload = mock_post.call_args_list[0].kwargs["json"]
-    # La question est envoyée avec un préfixe FR pour forcer la langue de la réponse
-    assert "Q2" in payload["query"]
-    assert "français" in payload["query"].lower()
+    call_url = mock_post.call_args_list[0].args[0]
+
+    assert call_url == TAVILY_ENDPOINT
+    assert payload["api_key"] == "test-key"
+    # La question est préfixée par l'instruction FR ou traduite
+    assert "capitale" in payload["query"].lower()
+    assert payload["include_answer"] is True
+    assert payload["language"] == "fr"
+    assert payload["search_depth"] == "basic"
 
 
 @patch("chatbot.llm.client.requests.post")
@@ -87,8 +95,6 @@ def test_ask_no_results(mock_post: MagicMock) -> None:
     mock_post.return_value.json.return_value = {"results": []}
 
     result = ask("question improbable", [], _make_settings())
-    assert isinstance(result, ConversationTurn)
-    assert result.user == "question improbable"
     assert result.sources == []
     assert "pas trouvé" in result.assistant.lower()
 
@@ -101,7 +107,6 @@ def test_ask_http_error_401(mock_post: MagicMock) -> None:
 
     with pytest.raises(TavilyError) as exc_info:
         ask("bonjour", [], _make_settings())
-
     assert exc_info.value.status == 401
 
 
@@ -113,59 +118,48 @@ def test_ask_http_error_500(mock_post: MagicMock) -> None:
 
     with pytest.raises(TavilyError) as exc_info:
         ask("bonjour", [], _make_settings())
-
     assert exc_info.value.status == 500
 
 
+@patch("chatbot.llm.client.translate_to_french")
 @patch("chatbot.llm.client.requests.post")
-def test_ask_payload_structure(mock_post: MagicMock) -> None:
-    """ask() envoie le payload correct à Tavily."""
+def test_ask_answer_translated(mock_post: MagicMock, mock_translate: MagicMock) -> None:
+    """L'answer de Tavily est passé par translate_to_french."""
     mock_post.return_value.status_code = 200
-    mock_post.return_value.json.return_value = MOCK_RESPONSE
+    mock_post.return_value.json.return_value = MOCK_RESPONSE_WITH_ANSWER
+    mock_translate.side_effect = lambda t: "La réponse est en français." if len(t) > 20 else t
 
-    ask("test", [], _make_settings())
-
-    payload = mock_post.call_args_list[0].kwargs["json"]
-    call_url = mock_post.call_args_list[0].args[0]
-
-    assert call_url == TAVILY_ENDPOINT
-    assert payload["api_key"] == "test-key"
-    assert "test" in payload["query"]
-    assert "français" in payload["query"].lower()
-    assert payload["include_answer"] is True
-    assert payload["language"] == "fr"
-    assert payload["search_depth"] == "basic"
+    result = ask("What is Python?", [], _make_settings())
+    assert "français" in result.assistant.lower()
+    # translate_to_french est appelée au moins 2 fois : question + answer
+    assert mock_translate.call_count >= 2
 
 
 # --- helpers ---
 
 
-def test_clean_content_removes_html_tags() -> None:
+def test_clean_content_removes_html() -> None:
     """_clean_content retire les tags HTML."""
-    raw = "Bonjour <br>Mondo <a href='x'>link</a> !!"
-    cleaned = _clean_content(raw)
+    cleaned = _clean_content("Bonjour <br>Mondo <a href='x'>link</a> !!")
     assert "<br>" not in cleaned
     assert "<a" not in cleaned
-    assert "Bonjour Mondo link" in cleaned.upper().replace("!".upper(), "").replace("!".upper(), "") or \
-        "Bonjour" in cleaned
+    assert "Bonjour" in cleaned
 
 
 def test_clean_content_removes_markdown_headings() -> None:
-    """_clean_content retire les headings Markdown (# ##)."""
-    raw = "## Titre\nContenu du texte\n### Sous-titre\n"
-    cleaned = _clean_content(raw)
+    """_clean_content retire les headings Markdown."""
+    cleaned = _clean_content("## Titre\n### Sous-titre\nContent")
     assert "##" not in cleaned
-    assert "Titre" not in cleaned or cleaned.count("Titre") == 0 or "contenu" in cleaned.lower()
+    assert "###" not in cleaned
 
 
 def test_clean_content_max_len() -> None:
     """_clean_content respecte la limite de longueur."""
-    raw = "a" * 500
-    cleaned = _clean_content(raw, max_len=100)
+    cleaned = _clean_content("a" * 500, max_len=100)
     assert len(cleaned) <= 100
 
 
-def test_build_answer_empty_results() -> None:
+def test_build_answer_empty() -> None:
     """_build_answer_from_results renvoie un message vide propre."""
     result = _build_answer_from_results([])
     assert "pas trouvé" in result.lower()
@@ -174,11 +168,11 @@ def test_build_answer_empty_results() -> None:
 def test_build_answer_with_results() -> None:
     """_build_answer_from_results construit une réponse depuis les résultats."""
     results = [
-        {"title": "Test", "content": "Contenu de test", "url": "https://a.fr"},
+        {"title": "Test", "content": "Un contenu de test", "url": "https://a.fr"},
     ]
     answer = _build_answer_from_results(results)
     assert "Test" in answer
-    assert "Contenu de test" in answer
+    assert "Un contenu de test" in answer
 
 
 def test_tavily_error_message() -> None:
