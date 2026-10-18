@@ -29,11 +29,7 @@ COMPLETER = WordCompleter(
 PROMPT = ANSI("\033[36mVous:\033[0m \033[32m>\033[0m ")
 
 # Bannière
-BANNER = (
-    "\033[44;37m  "
-    "Chatbot CLI  —  RGPD / AI Act / Data Act  "
-    "\033[0m\n"
-)
+BANNER = "\033[44;37m  " "Chatbot CLI  —  RGPD / AI Act / Data Act  " "\033[0m\n"
 
 # Aide
 HELP_TEXT = (
@@ -90,9 +86,7 @@ class PromptUI:
         """Affiche les sources (jaune, italique)."""
         print(f"\033[33m  Sources:\033[0m  {' | '.join(urls)}")
 
-    def stats_line(
-        self, turns: int, sources: int, memory_max: int
-    ) -> None:
+    def stats_line(self, turns: int, sources: int, memory_max: int) -> None:
         """Affiche la ligne de statistiques (gris)."""
         print(
             f"\033[90m  [Stats] tours: {turns} | "

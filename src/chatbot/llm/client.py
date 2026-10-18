@@ -43,10 +43,11 @@ def ask(
     messages = build_prompt(history, question)
 
     last_user_msg = messages[-1]["content"]
-    context = "\n".join(
-        f"{turn.user} → {turn.assistant}"
-        for turn in history
-    ) if history else ""
+    context = (
+        "\n".join(f"{turn.user} → {turn.assistant}" for turn in history)
+        if history
+        else ""
+    )
 
     full_query = f"[Contexte]\n{context}\n\n[Question]\n{last_user_msg}".strip()
 
@@ -82,7 +83,10 @@ def ask(
 
     # Si la réponse est vide, on construit un fallback à partir des résultats
     if not answer and results:
-        answer = "\n".join(f"- {r.get('title', '')} : {r.get('content', '')[:150]}" for r in results[:3])
+        answer = "\n".join(
+            f"- {r.get('title', '')} : {r.get('content', '')[:150]}"
+            for r in results[:3]
+        )
 
     logger.info("réponse générée (%d sources)", len(sources))
     return ConversationTurn(user=question, assistant=answer, sources=sources)

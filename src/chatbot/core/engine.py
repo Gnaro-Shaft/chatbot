@@ -86,7 +86,7 @@ class ConversationEngine:
                 print(undo(self.memory))
                 continue
             if user_input.startswith("/correct "):
-                correction = user_input[len("/correct "):]
+                correction = user_input[len("/correct ") :]
                 print(correct(self.memory, correction))
                 continue
 

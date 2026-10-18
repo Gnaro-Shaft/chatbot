@@ -22,7 +22,7 @@ def load_env(env_file: str = ".env") -> dict[str, str]:
         if not line or line.startswith("#"):
             continue
         key, _, val = line.partition("=")
-        config[key.strip()] = val.strip().strip('"\'')
+        config[key.strip()] = val.strip().strip("\"'")
 
     return config
 

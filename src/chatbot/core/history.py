@@ -31,7 +31,7 @@ class MemoryManager:
 
         :return: Historique tronqué à memory_turns
         """
-        return self._history[-self.memory_turns:]
+        return self._history[-self.memory_turns :]
 
     def add(self, turn: ConversationTurn) -> None:
         """Ajoute un tour à l'historique.
