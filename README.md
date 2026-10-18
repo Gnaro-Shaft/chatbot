@@ -1,5 +1,7 @@
 # Chatbot — Chatbot conversationnel CLI
 
+[![CI](https://github.com/Gnaro-Shaft/chatbot/actions/workflows/ci.yml/badge.svg)](https://github.com/Gnaro-Shaft/chatbot/actions/workflows/ci.yml)
+
 Un chatbot conversationnel en ligne de commande, conforme aux cadres
 **RGPD**, **AI Act** et **Data Act**.
 
