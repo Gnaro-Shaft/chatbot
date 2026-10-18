@@ -57,7 +57,7 @@ jobs:
           import subprocess, json
           subprocess.check_output(
               ['pytest', 'tests/', '--cov=src/chatbot', '--cov-report=json:.coverage.json'],
-              capture_output=True, text=True)
+              text=True)
           data = json.load(open('.coverage.json'))
           total = data['totals']['num_statements']
           missed = data['totals']['missing_lines']
