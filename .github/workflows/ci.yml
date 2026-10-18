@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install ruff black pytest pytest-mock pytest-cov
+
+      - name: Ruff check
+        run: ruff check src/
+
+      - name: Black check
+        run: black --check --quiet src/
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e .
+          pip install pytest pytest-mock pytest-cov
+
+      - name: Run tests
+        run: pytest tests/ --no-header -v --cov=src/chatbot --cov-report=term-missing
+
+      - name: Coverage gate (>= 90%)
+        run: |
+          COVERAGE=$(python -c "
+          import subprocess, re
+          out = subprocess.check_output(
+              ['pytest', 'tests/', '--cov=src/chatbot', '--cov-report=json:.coverage.json'],
+              capture_output=True, text=True)
+          import json
+          data = json.load(open('.coverage.json'))
+          total = data['totals']['num_statements']
+          missed = data['totals']['missing_lines']
+          pct = 100.0 * (total - missed) / max(total, 1)
+          print(f'{pct:.1f}%')
+          print('PASS' if pct >= 90.0 else 'FAIL', sep=',')
+          ")
+          PCT=$(echo $COVERAGE | cut -d, -f1)
+          STATUS=$(echo $COVERAGE | cut -d, -f2)
+          echo "Couverture: $PCT"
+          if [ "$STATUS" != "PASS" ]; then
+            echo "Couverture < 90% : échec"
+            exit 1
+          fi
