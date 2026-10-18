@@ -1,0 +1,35 @@
+[project]
+name = "chatbot"
+version = "0.1.0"
+description = "Chatbot conversationnel CLI — RGPD / AI Act / Data Act compliant"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "requests>=2.31",
+]
+
+[project.scripts]
+chatbot = "chatbot.main:main"
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+]
+ignore = ["E501"]  # line-length géré par black
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --cov=src/chatbot --cov-report=term-missing"
